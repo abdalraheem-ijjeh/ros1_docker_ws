@@ -92,6 +92,14 @@ This builds an image containing ROS Noetic, your package (with custom messages),
 
 ---
 
+7. **Frequency**
+```bash
+docker exec -it ros_master bash -lc "\
+  source /opt/ros/noetic/setup.bash && \
+  rostopic hz /image_meta"
+ ```
+
+
 ## Run across two machines (drone + base station)
 
 1. **On the base station (laptop)**
@@ -138,12 +146,5 @@ docker rm -f ros_master ros_pub ros_sub
 
 ---
 
-## Customization
 
-- **`~image_folder`**: the publisher’s source folder (default `/root/catkin_ws/images`).
-- **`~output_folder`**: the subscriber’s destination (default `/root/catkin_ws/img_dst`).
-- **FPS**: adjust `rate = rospy.Rate(10)` in `image_publisher.py` for a different frame rate.
 
----
-
-You’re all set! Drop new images into your source folder and watch them flow through ROS with embedded metadata.

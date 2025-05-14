@@ -1,78 +1,91 @@
 #!/usr/bin/env python3
 import os
+import subprocess
+import json
 import rospy
 from sv01_uav_bs_transmission.msg import ImageWithMetadataComp
-from PIL import Image
-from PIL.ExifTags import TAGS
+
 
 def extract_metadata(image_path):
-    metadata = {}
+    """
+    Extract metadata from an image via exiftool JSON output.
+    Returns a dict of metadata fields.
+    """
     try:
-        with Image.open(image_path) as img:
-            exif = img._getexif() or {}
-            for tag_id, value in exif.items():
-                tag_name = TAGS.get(tag_id) or str(tag_id)
-                metadata[str(tag_name)] = value
+        raw = subprocess.check_output(
+            ['exiftool', '-json', image_path],
+            stderr=subprocess.STDOUT
+        )
+        metadata_dict = json.loads(raw.decode('utf-8'))[0]
+
+        # normalize and cleanup
+        metadata_dict['Directory'] = '.'
+        metadata_dict.pop('SourceFile', None)
+        return metadata_dict
+
+    except subprocess.CalledProcessError as e:
+        err = (e.output or b""
+              ).decode('utf-8', errors='ignore')
+        rospy.logerr(f"ExifTool error for {image_path}: {err}")
+        return {}
     except Exception as e:
-        rospy.logwarn(f"extract_metadata: {e}")
-    try:
-        stat = os.stat(image_path)
-        metadata['file_name']       = os.path.basename(image_path)
-        metadata['file_size_bytes'] = stat.st_size
-        metadata['last_modified']   = stat.st_mtime
-    except Exception as e:
-        rospy.logwarn(f"file stat error: {e}")
-    keys   = list(metadata.keys())
-    values = [str(metadata[k]) for k in keys]
-    return keys, values
+        rospy.logexception(f"Unexpected error extracting metadata for {image_path}: {e}")
+        return {}
+
 
 def image_publisher(folder_path):
     rospy.init_node('image_publisher_uav', anonymous=True)
-    pub = rospy.Publisher('image_meta', ImageWithMetadataComp, queue_size=10)
-    rate = rospy.Rate(10)  # 10 Hz
+    pub = rospy.Publisher('image_meta', ImageWithMetadataComp, queue_size=100)
+    rate = rospy.Rate(1)
 
-    published = set()  # track filenames already sent
+    published = set()
+    rospy.loginfo(f"Watching folder for images to publish: {folder_path}")
 
-    rospy.loginfo(f"Watching folder: {folder_path}")
     while not rospy.is_shutdown():
         try:
-            files = sorted(f for f in os.listdir(folder_path)
-                           if f.lower().endswith(('.jpg','.jpeg','.png')))
+            files = sorted(
+                f for f in os.listdir(folder_path)
+                if f.lower().endswith(('.jpg', '.jpeg', '.png'))
+            )
         except Exception as e:
-            rospy.logerr(f"Could not list folder: {e}")
+            rospy.logerr(f"Could not list folder {folder_path}: {e}")
             rate.sleep()
             continue
 
         for fn in files:
             if fn in published:
                 continue
-
             path = os.path.join(folder_path, fn)
+
             try:
                 with open(path, 'rb') as f:
-                    img_bytes = f.read()
+                    data = f.read()
             except Exception as e:
-                rospy.logwarn(f"Could not read {fn}: {e}")
+                rospy.logwarn(f"Cannot read file {path}: {e}")
                 continue
 
-            keys, vals = extract_metadata(path)
+            metadata_dict = extract_metadata(path)
+            keys = list(metadata_dict.keys())
+            values = [str(metadata_dict[k]) for k in keys]
 
             msg = ImageWithMetadataComp()
-            msg.image.format      = os.path.splitext(fn)[1].lstrip('.')
-            msg.image.data        = img_bytes
-            msg.metadata_keys     = keys
-            msg.metadata_values   = vals
+            msg.image.format = fn.split('.')[-1]  # e.g. jpg
+            msg.image.data = data
+            msg.metadata_keys = keys
+            msg.metadata_values = values
 
             pub.publish(msg)
-            rospy.loginfo(f"Published new image {fn} ({len(keys)} metadata entries)")
+            rospy.loginfo(f"Published {fn} with {len(keys)} metadata entries")
             published.add(fn)
 
             rate.sleep()
+
         rate.sleep()
 
+
 if __name__ == '__main__':
-    folder = rospy.get_param('~image_folder', '/root/catkin_ws/images')
+    image_folder = rospy.get_param('~image_folder', '/root/catkin_ws/images')
     try:
-        image_publisher(folder)
+        image_publisher(image_folder)
     except rospy.ROSInterruptException:
         pass

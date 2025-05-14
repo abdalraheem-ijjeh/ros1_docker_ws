@@ -53,6 +53,7 @@ find_package(catkin REQUIRED COMPONENTS
 add_message_files(
   FILES
   ImageWithMetadataComp.msg
+  Ack.msg
 #   Message2.msg
 )
 
