@@ -62,10 +62,10 @@ This builds an image containing ROS Noetic, your package (with custom messages),
    ```bash
    docker run --rm --name ros_sub \
      --network host \
-     -e ROS_MASTER_URI=http://127.0.0.1:11311 \
-     -e ROS_IP=127.0.0.1 \
+     -e ROS_MASTER_URI=http://192.168.1.45:11311 \
+     -e ROS_IP=192.168.1.45 \
      -e NODE=image_subscriber.py \
-     -v ~/ros1_img_dst:/root/catkin_ws/img_dst \
+     -v /mnt/storage/home/abdalraheem/Documents/live_trials/La_Saeta/missions/mission_1/mission_data/UAV_01/flight_01:/root/catkin_ws/img_dst \
      sv01_uav_bs_transmission:latest
    ```
 
@@ -125,10 +125,10 @@ docker exec -it ros_master bash -lc "\
    ```bash
    # Subscribe and save tagged images
    docker run --rm --name ros_sub --network host \
-     -e ROS_MASTER_URI=http://<BS_IP>:11311 \
-     -e ROS_IP=<BS_IP> \
+     -e ROS_MASTER_URI=http://192.168.1.45:11311 \
+     -e ROS_IP=192.168.1.45 \
      -e NODE=image_subscriber.py \
-     -v /path/to/output:/root/catkin_ws/img_dst \
+     -v /mnt/storage/home/abdalraheem/Documents/live_trials/La_Saeta/missions/mission_1/mission_data/UAV_01/flight_01:/root/catkin_ws/img_dst \
      sv01_uav_bs_transmission:latest
    ```
 
