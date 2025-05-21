@@ -8,7 +8,6 @@ project(sv01_uav_bs_transmission)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  cv_bridge
   roscpp
   rospy
   sensor_msgs
@@ -109,7 +108,7 @@ generate_messages(
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES drone_img_transmission
-CATKIN_DEPENDS cv_bridge roscpp message_runtime std_msgs sensor_msgs rospy
+CATKIN_DEPENDS roscpp message_runtime std_msgs sensor_msgs rospy
 #  DEPENDS system_lib
 )
 

@@ -1,152 +1,141 @@
 #!/usr/bin/env python3
+"""
+ROS Noetic base-station image subscriber
+---------------------------------------
+
+Subscribes to /image_meta (type sv01_uav_bs_transmission/ImageWithMetadataComp),
+writes every frame under  <output_root>/<drone_id>/flight_<n>/,
+and embeds all metadata back into the saved image.
+
+Parameters
+~~~~~~~~~~
+~output_folder   (str)  Root directory for all images   [default: /tmp/drone_images]
+~queue_size      (int)  Max frames waiting for disk     [default: 500]
+"""
+
 import os
-import json
 import subprocess
-import threading
 import queue
-import rospy
-import numpy as np
+import threading
+import json
+
 import cv2
+import numpy as np
+import rospy
 from sv01_uav_bs_transmission.msg import ImageWithMetadataComp
 
-# Subscriber node that receives ImageWithMetadataComp and embeds metadata back into images
-# using ExifTool JSON interface.
 
-topic_param = '~topic'
-out_folder_param = '~output_folder'
-
-# Background queue for disk writes
-disk_write_queue = None
-
-
-def compressed_to_cv2(img_msg):
-    """
-    Decode sensor_msgs/CompressedImage data to an OpenCV BGR image.
-    """
-    try:
-        arr = np.frombuffer(img_msg.data, np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if img is None:
-            raise ValueError("Decoded image is None")
-        return img
-    except Exception as e:
-        rospy.logerr(f"Error decoding image: {e}")
-        return None
+# ─────────────────────────────────── helpers ──────────────────────────────────
+def compressed_to_cv2(comp_msg):
+    """Convert sensor_msgs/CompressedImage → cv2 BGR ndarray."""
+    buf = np.frombuffer(comp_msg.data, dtype=np.uint8)
+    return cv2.imdecode(buf, cv2.IMREAD_COLOR)
 
 
 def embed_exif(json_path, img_path):
-    """
-    Use ExifTool to write metadata from JSON into the given image file.
-    """
-    subprocess.run([
-        'exiftool',
-        f'-json={json_path}',
-        '-overwrite_original',
-        img_path
-    ], check=True)
+    """Write all tags from *json_path* into *img_path* in-place."""
+    subprocess.run(
+        ['exiftool', f'-json={json_path}', '-overwrite_original', img_path],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
-def save_with_metadata(cv_img, exif_dict, out_folder, filename):
+def save_with_metadata(cv_img, exif_dict, out_dir, filename):
     """
-    Save OpenCV image to disk and embed metadata via ExifTool.
+    Encode *cv_img* to disk (JPG/PNG) and embed *exif_dict* via ExifTool.
     """
-    os.makedirs(out_folder, exist_ok=True)
-    img_path = os.path.join(out_folder, filename)
+    os.makedirs(out_dir, exist_ok=True)
+    img_path = os.path.join(out_dir, filename)
 
-    # Determine extension and encode image accordingly
+    # encode image
     ext = os.path.splitext(filename)[1].lower() or '.jpg'
-    success, buf = cv2.imencode(ext, cv_img)
-    if success:
-        with open(img_path, 'wb') as f:
-            f.write(buf)
-    else:
-        cv2.imwrite(img_path, cv_img)
+    ok, buf = cv2.imencode(ext, cv_img)
+    if not ok:
+        raise IOError("cv2.imencode failed")
 
-    # Write metadata JSON file for ExifTool
+    with open(img_path, 'wb') as fh:
+        fh.write(buf)
+
+    # write one-object JSON for ExifTool
     json_path = img_path + '.json'
-    with open(json_path, 'w') as jf:
-        json.dump([exif_dict], jf, indent=4)
+    with open(json_path, 'w', encoding='utf-8') as jf:
+        json.dump([exif_dict], jf, indent=4, ensure_ascii=False)
 
-    # Embed metadata
-    try:
-        embed_exif(json_path, img_path)
-        rospy.loginfo(f"Embedded metadata into {filename}")
-    except Exception as e:
-        rospy.logerr(f"ExifTool embedding failed for {filename}: {e}")
+    # embed and clean up
+    embed_exif(json_path, img_path)
+    os.remove(json_path)
 
 
-def disk_writer_worker(q, out_folder):
-    """
-    Worker thread that processes the disk_write_queue.
-    """
+# ───────────────────────────── disk-writer thread ─────────────────────────────
+def disk_writer_worker(q):
     while not rospy.is_shutdown():
         try:
-            cv_img, exif_dict, fname = q.get(timeout=1)
+            cv_img, exif_dict, fname, out_dir = q.get(timeout=1)
         except queue.Empty:
             continue
         try:
-            save_with_metadata(cv_img, exif_dict, out_folder, fname)
-        except Exception as e:
-            rospy.logerr(f"Error saving {fname}: {e}")
-        finally:
-            q.task_done()
+            save_with_metadata(cv_img, exif_dict, out_dir, fname)
+            rospy.loginfo(f"✔ Saved {fname} → {out_dir}")
+        except Exception as exc:
+            rospy.logerr(f"✖ Failed to save {fname}: {exc}")
 
 
-def image_callback(msg):
-    """
-    Callback invoked on arrival of an ImageWithMetadataComp message.
-    Uses the 'FileName' metadata to ensure naming consistency.
-    """
-    cv_img = compressed_to_cv2(msg.image)
-    if cv_img is None:
-        return
+# ─────────────────────────────── ROS callback ────────────────────────────────
+def make_callback(output_root, q):
+    def image_cb(msg):
+        cv_img = compressed_to_cv2(msg.image)
+        if cv_img is None:
+            rospy.logwarn("Decode failure – skipping frame")
+            return
 
-    # Reconstruct metadata dictionary
-    exif_dict = {k: v for k, v in zip(msg.metadata_keys, msg.metadata_values)}
+        # Reconstruct metadata dict (undo json.dumps on publisher side)
+        exif_dict = {
+            k: json.loads(v) for k, v in zip(msg.metadata_keys, msg.metadata_values)
+        }
 
-    # Use the exact FileName published
-    filename = exif_dict.get('FileName')
-    if not filename:
-        rospy.logerr("Received image without 'FileName' metadata; skipping.")
-        return
+        filename = exif_dict.get('FileName')
+        if not filename:
+            # fallback name: timestamp + extension
+            filename = f"{msg.image.header.stamp.to_nsec()}.{msg.image.format}"
 
-    # Enqueue for background saving
-    try:
-        disk_write_queue.put((cv_img, exif_dict, filename), block=True, timeout=1)
-        rospy.loginfo(f"Queued {filename} for saving and embedding")
-    except queue.Full:
-        rospy.logwarn(f"Disk write queue full, dropping image {filename}")
+        drone   = msg.drone_id or 'unknown'
+        flight  = f"flight_{msg.flight_num}" if msg.flight_num else "flight_0"
+        out_dir = os.path.join(output_root, drone, flight)
+
+        try:
+            q.put((cv_img, exif_dict, filename, out_dir), block=False)
+        except queue.Full:
+            rospy.logwarn("Writer queue full – dropping frame")
+
+    return image_cb
 
 
+# ─────────────────────────────────── main ─────────────────────────────────────
 def main():
     rospy.init_node('image_subscriber', anonymous=True)
-    topic = rospy.get_param(topic_param, 'image_meta')
-    out_folder = rospy.get_param(out_folder_param, '/root/catkin_ws/img_dst')
 
-    rospy.loginfo(f"Subscribing to '{topic}', saving to '{out_folder}'")
+    output_root = rospy.get_param('~output_folder', '/tmp/drone_images')
+    qsize       = int(rospy.get_param('~queue_size', 500))
 
-    global disk_write_queue
-    # Buffer large images
-    disk_write_queue = queue.Queue(maxsize=500)
+    disk_q = queue.Queue(maxsize=qsize)
+    threading.Thread(target=disk_writer_worker, args=(disk_q,), daemon=True).start()
 
-    # Start background disk writer thread
-    writer = threading.Thread(
-        target=disk_writer_worker,
-        args=(disk_write_queue, out_folder),
-        daemon=True
-    )
-    writer.start()
-
-    # Subscribe with large internal buffer to avoid drops
     rospy.Subscriber(
-        topic,
+        'image_meta',
         ImageWithMetadataComp,
-        image_callback,
+        make_callback(output_root, disk_q),
         queue_size=200,
-        buff_size=50 * 1024 * 1024  # 50 MB
+        buff_size=50 * 1024 * 1024,
     )
 
+    rospy.loginfo(f"📥 image_subscriber up – writing to {output_root}")
     rospy.spin()
 
+
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except rospy.ROSInterruptException:
+        pass
