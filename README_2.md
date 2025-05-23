@@ -87,7 +87,7 @@ rosrun sv01_uav_bs_transmission image_publisher.py \
 
 1. ROS master (ROSCORE)
 
-docker run --rm -d --net=host --name ros_master   -e ROS_MASTER_URI=http://$HOST_IP:11311   -e ROS_IP=$HOST_IP   ros:noetic-ros-core   roscore
+docker run --rm -d --net=host --name ros_master   -e ROS_MASTER_URI=http://192.168.1.45:11311   -e ROS_IP=192.168.1.45   ros:noetic-ros-core   roscore
 
 2. subscriber
 
