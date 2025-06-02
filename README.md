@@ -17,7 +17,6 @@ This package provides a ROS 1 publisher–subscriber system for transmitting ima
 ```bash
 cd ~/ros1_docker_ws
 # (Ensure your package source is in src/)
-docker build -t sv01_uav_bs_transmission:latest .
 ```
 
 This builds an image containing ROS Noetic, your package (with custom messages), OpenCV, Pillow, cv_bridge, and ExifTool.

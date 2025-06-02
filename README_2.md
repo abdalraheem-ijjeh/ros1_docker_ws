@@ -81,8 +81,16 @@ source ~/catkin_ws/devel/setup.bash
 rosrun sv01_uav_bs_transmission image_publisher.py \
        _drone_id:=UAV_01 \
        _flight_num:=01 \
-       _image_folder:=/data/camera_images
+       _image_folder:=/home/khadas/programming/Payload-SDK/build/bin
 ```
+
+```bash
+rosrun sv01_uav_bs_transmission image_publisher.py \
+       _drone_id:=UAV_02 \
+       _flight_num:=01 \
+       _image_folder:=/home/khadas/programming/Onboard-SDK/build/bin
+```
+
 
 
 1. ROS master (ROSCORE)
@@ -91,7 +99,10 @@ docker run --rm -d --net=host --name ros_master   -e ROS_MASTER_URI=http://192.1
 
 2. subscriber
 
-docker run --rm --net=host   -e ROS_MASTER_URI=http://$HOST_IP:11311   -e ROS_IP=$HOST_IP   -v /mnt/storage/home/abdalraheem/Documents/live_trials/office/missions/mission_1/mission_data:/data   uav_bs:noetic   bash -c "source /root/catkin_ws/devel/setup.bash && \
+docker run --rm --net=host   -e ROS_MASTER_URI=http://192.168.1.45:11311   -e ROS_IP=192.168.1.45   -v /mnt/storage/home/abdalraheem/Documents/live_trials/Seville_GRVC/missions/mission_data/:/data   uav_bs:noetic   bash -c "source /root/catkin_ws/devel/setup.bash && \
+           rosrun sv01_uav_bs_transmission image_subscriber.py _output_folder:=/data"
+
+docker run --rm --net=host   -e ROS_MASTER_URI=http://127.0.0.1:11311   -e ROS_IP=127.0.0.1   -v /mnt/storage/home/abdalraheem/Documents/live_trials/Sevilla_Utrera/missions/mission_data/:/data   uav_bs:noetic   bash -c "source /root/catkin_ws/devel/setup.bash && \
            rosrun sv01_uav_bs_transmission image_subscriber.py _output_folder:=/data"
 
 3. publisher (UAV_01)
@@ -111,6 +122,46 @@ _image_folder:=/images"
 
 5. Publisher (UAV03)
 docker run --rm --net=host   -e ROS_MASTER_URI=http://$HOST_IP:11311   -e ROS_IP=$HOST_IP   -v /home/grvc/ros1_images:/images:ro   uav_bs:noetic   bash -c "source /root/catkin_ws/devel/setup.bash && \
+rosrun sv01_uav_bs_transmission image_publisher.py \
+_drone_id:=UAV_03 \
+_flight_num:=02 \
+_image_folder:=/images"
+
+# #############################################################################
+# Modified version
+# #############################################################################
+1. ROS master (ROSCORE)
+
+docker run --rm -d --net=host --name ros_master   -e ROS_MASTER_URI=http://192.168.1.45:11311   -e ROS_IP=192.168.1.45   ros:noetic-ros-core   roscore
+
+docker run --rm -d --net=host --name ros_master   -e ROS_MASTER_URI=http://127.0.0.1:11311   -e ROS_IP=192.168.1.45   ros:noetic-ros-core   roscore
+
+
+2. subscriber
+
+docker run --rm --net=host   -e ROS_MASTER_URI=http://192.168.1.45:11311   -e ROS_IP=192.168.1.45   -v /mnt/storage/home/abdalraheem/Documents/live_trials/Seville_GRVC/missions/mission_data/:/data   my_ros_image:latest   bash -c "source /root/catkin_ws/devel/setup.bash && \
+           rosrun sv01_uav_bs_transmission image_subscriber.py _output_folder:=/data"
+
+docker run --rm --net=host   -e ROS_MASTER_URI=http://127.0.0.1:11311   -e ROS_IP=127.0.0.1   -v /mnt/storage/home/abdalraheem/Documents/live_trials/office/missions/mission_1/mission_data/:/data   my_ros_image:latest   bash -c "source /root/catkin_ws/devel/setup.bash && \
+           rosrun sv01_uav_bs_transmission image_subscriber.py _output_folder:=/data"
+
+3. publisher (UAV_01)
+docker run --rm --net=host   -e ROS_MASTER_URI=http://$HOST_IP:11311   -e ROS_IP=$HOST_IP   -v /home/grvc/ros1_images:/images:ro   my_ros_image:latest   bash -c "source /root/catkin_ws/devel/setup.bash && \
+rosrun sv01_uav_bs_transmission image_publisher.py \
+_drone_id:=UAV_01 \
+_flight_num:=02 \
+_image_folder:=/images"
+
+4. Publisher (UAV_02)
+
+docker run --rm --net=host   -e ROS_MASTER_URI=http://$HOST_IP:11311   -e ROS_IP=$HOST_IP   -v /home/grvc/ros1_images:/images:ro   my_ros_image:latest   bash -c "source /root/catkin_ws/devel/setup.bash && \
+rosrun sv01_uav_bs_transmission image_publisher.py \
+_drone_id:=UAV_02 \
+_flight_num:=02 \
+_image_folder:=/images"
+
+5. Publisher (UAV03)
+docker run --rm --net=host   -e ROS_MASTER_URI=http://$HOST_IP:11311   -e ROS_IP=$HOST_IP   -v /home/grvc/ros1_images:/images:ro   my_ros_image:latest   bash -c "source /root/catkin_ws/devel/setup.bash && \
 rosrun sv01_uav_bs_transmission image_publisher.py \
 _drone_id:=UAV_03 \
 _flight_num:=02 \

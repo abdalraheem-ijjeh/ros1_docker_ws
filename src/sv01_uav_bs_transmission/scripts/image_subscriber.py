@@ -4,7 +4,7 @@ ROS Noetic base-station image subscriber
 ---------------------------------------
 
 Subscribes to /image_meta (type sv01_uav_bs_transmission/ImageWithMetadataComp),
-writes every frame under  <output_root>/<drone_id>/flight_<n>/,
+writes every frame under <output_root>/<drone_id>/flight_<n>/,
 and embeds all metadata back into the saved image.
 
 Parameters
@@ -13,11 +13,15 @@ Parameters
 ~queue_size      (int)  Max frames waiting for disk     [default: 500]
 """
 
+# ── Python-3.8 typing retrofit ────────────────────────────────────────────────
+from __future__ import annotations   # enables PEP-563 postponed evaluation
+
 import os
 import subprocess
 import queue
 import threading
 import json
+from typing import Dict, Any
 
 import cv2
 import numpy as np
@@ -32,7 +36,7 @@ def compressed_to_cv2(comp_msg):
     return cv2.imdecode(buf, cv2.IMREAD_COLOR)
 
 
-def embed_exif(json_path, img_path):
+def embed_exif(json_path: str, img_path: str) -> None:
     """Write all tags from *json_path* into *img_path* in-place."""
     subprocess.run(
         ['exiftool', f'-json={json_path}', '-overwrite_original', img_path],
@@ -42,10 +46,13 @@ def embed_exif(json_path, img_path):
     )
 
 
-def save_with_metadata(cv_img, exif_dict, out_dir, filename):
-    """
-    Encode *cv_img* to disk (JPG/PNG) and embed *exif_dict* via ExifTool.
-    """
+def save_with_metadata(
+    cv_img: np.ndarray,
+    exif_dict: Dict[str, Any],
+    out_dir: str,
+    filename: str
+) -> None:
+    """Encode *cv_img* to disk and embed *exif_dict* via ExifTool."""
     os.makedirs(out_dir, exist_ok=True)
     img_path = os.path.join(out_dir, filename)
 
@@ -69,7 +76,7 @@ def save_with_metadata(cv_img, exif_dict, out_dir, filename):
 
 
 # ───────────────────────────── disk-writer thread ─────────────────────────────
-def disk_writer_worker(q):
+def disk_writer_worker(q: queue.Queue) -> None:
     while not rospy.is_shutdown():
         try:
             cv_img, exif_dict, fname, out_dir = q.get(timeout=1)
@@ -83,29 +90,41 @@ def disk_writer_worker(q):
 
 
 # ─────────────────────────────── ROS callback ────────────────────────────────
-def make_callback(output_root, q):
-    def image_cb(msg):
-        cv_img = compressed_to_cv2(msg.image)
-        if cv_img is None:
+def make_callback(output_root: str, q: queue.Queue):
+    def image_cb(msg: ImageWithMetadataComp) -> None:
+        # 1) Decode the compressed bytes into a small (down-scaled) cv2 image
+        cv_img_small = compressed_to_cv2(msg.image)
+        if cv_img_small is None:
             rospy.logwarn("Decode failure – skipping frame")
             return
 
-        # Reconstruct metadata dict (undo json.dumps on publisher side)
-        exif_dict = {
+        # 2) Upscale by a factor of 4 (bilinear looked blurry; cubic is nicer)
+        h_small, w_small = cv_img_small.shape[:2]
+        cv_img_up = cv2.resize(
+            cv_img_small,
+            (w_small * 4, h_small * 4),
+            interpolation=cv2.INTER_CUBIC,
+        )
+
+        # 3) Reconstruct metadata dict (undo json.dumps on publisher side)
+        exif_dict: Dict[str, Any] = {
             k: json.loads(v) for k, v in zip(msg.metadata_keys, msg.metadata_values)
         }
 
+        # 4) Determine output filename
         filename = exif_dict.get('FileName')
         if not filename:
-            # fallback name: timestamp + extension
+            # fallback: ROS timestamp + extension
             filename = f"{msg.image.header.stamp.to_nsec()}.{msg.image.format}"
 
+        # 5) Build output directory path
         drone   = msg.drone_id or 'unknown'
         flight  = f"flight_{msg.flight_num}" if msg.flight_num else "flight_0"
         out_dir = os.path.join(output_root, drone, flight)
 
+        # 6) Enqueue for disk writing
         try:
-            q.put((cv_img, exif_dict, filename, out_dir), block=False)
+            q.put((cv_img_up, exif_dict, filename, out_dir), block=False)
         except queue.Full:
             rospy.logwarn("Writer queue full – dropping frame")
 
@@ -113,7 +132,7 @@ def make_callback(output_root, q):
 
 
 # ─────────────────────────────────── main ─────────────────────────────────────
-def main():
+def main() -> None:
     rospy.init_node('image_subscriber', anonymous=True)
 
     output_root = rospy.get_param('~output_folder', '/tmp/drone_images')
@@ -130,7 +149,7 @@ def main():
         buff_size=50 * 1024 * 1024,
     )
 
-    rospy.loginfo(f"📥 image_subscriber up – writing to {output_root}")
+    rospy.loginfo(f"📥 image_subscriber ready – writing to {output_root}")
     rospy.spin()
 
 
