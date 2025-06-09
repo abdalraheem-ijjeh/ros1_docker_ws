@@ -79,7 +79,7 @@ source ~/catkin_ws/devel/setup.bash
 ```bash
 # 3 – run the node
 rosrun sv01_uav_bs_transmission image_publisher.py \
-       _drone_id:=UAV_01 \
+       _drone_id:=UAV_02 \
        _flight_num:=01 \
        _image_folder:=/home/khadas/programming/Payload-SDK/build/bin
 ```
@@ -139,31 +139,61 @@ docker run --rm -d --net=host --name ros_master   -e ROS_MASTER_URI=http://127.0
 
 2. subscriber
 
-docker run --rm --net=host   -e ROS_MASTER_URI=http://192.168.1.45:11311   -e ROS_IP=192.168.1.45   -v /mnt/storage/home/abdalraheem/Documents/live_trials/Seville_GRVC/missions/mission_data/:/data   my_ros_image:latest   bash -c "source /root/catkin_ws/devel/setup.bash && \
+docker run --rm --net=host   -e ROS_MASTER_URI=http://192.168.1.45:11311   -e ROS_IP=192.168.1.45   -v /mnt/storage/home/abdalraheem/Documents/live_trials/La_Saeta/missions/mission_1/mission_data/:/data   my_ros_image:latest   bash -c "source /root/catkin_ws/devel/setup.bash && \
            rosrun sv01_uav_bs_transmission image_subscriber.py _output_folder:=/data"
 
-docker run --rm --net=host   -e ROS_MASTER_URI=http://127.0.0.1:11311   -e ROS_IP=127.0.0.1   -v /mnt/storage/home/abdalraheem/Documents/live_trials/office/missions/mission_1/mission_data/:/data   my_ros_image:latest   bash -c "source /root/catkin_ws/devel/setup.bash && \
-           rosrun sv01_uav_bs_transmission image_subscriber.py _output_folder:=/data"
+docker run --rm --net=host \
+  -e ROS_MASTER_URI=http://$HOST_IP:11311 \
+  -e ROS_IP=$HOST_IP \
+  -v /mnt/storage/home/abdalraheem/Documents/live_trials/La_Saeta/missions/mission_1/mission_data/:/data:rw \
+  my_ros_image:latest \
+  bash -c "source /root/catkin_ws/devel/setup.bash && \
+           rosrun sv01_uav_bs_transmission image_subscriber.py \
+             _output_folder:=/data \
+             _upscale_factor:=4.0   \
+             _queue_size:=500"   # optional – default is 500
+
 
 3. publisher (UAV_01)
-docker run --rm --net=host   -e ROS_MASTER_URI=http://$HOST_IP:11311   -e ROS_IP=$HOST_IP   -v /home/grvc/ros1_images:/images:ro   my_ros_image:latest   bash -c "source /root/catkin_ws/devel/setup.bash && \
-rosrun sv01_uav_bs_transmission image_publisher.py \
-_drone_id:=UAV_01 \
-_flight_num:=02 \
-_image_folder:=/images"
+docker run --rm --net=host \
+  -e ROS_MASTER_URI=http://$HOST_IP:11311 \
+  -e ROS_IP=$HOST_IP \
+  -v /home/grvc/ros1_images:/images:ro \
+  my_ros_image:latest \
+  bash -c "source /root/catkin_ws/devel/setup.bash && \
+           rosrun sv01_uav_bs_transmission image_publisher.py \
+             _drone_id:=UAV_01 \
+             _flight_num:=01 \
+             _image_folder:=/images \
+             _scale_factor:=0.25 \
+             _jpeg_quality:=80"
 
 4. Publisher (UAV_02)
 
-docker run --rm --net=host   -e ROS_MASTER_URI=http://$HOST_IP:11311   -e ROS_IP=$HOST_IP   -v /home/grvc/ros1_images:/images:ro   my_ros_image:latest   bash -c "source /root/catkin_ws/devel/setup.bash && \
-rosrun sv01_uav_bs_transmission image_publisher.py \
-_drone_id:=UAV_02 \
-_flight_num:=02 \
-_image_folder:=/images"
+docker run --rm --net=host \
+  -e ROS_MASTER_URI=http://$HOST_IP:11311 \
+  -e ROS_IP=$HOST_IP \
+  -v /home/grvc/ros1_images:/images:ro \
+  my_ros_image:latest \
+  bash -c "source /root/catkin_ws/devel/setup.bash && \
+           rosrun sv01_uav_bs_transmission image_publisher.py \
+             _drone_id:=UAV_02 \
+             _flight_num:=01 \
+             _image_folder:=/images \
+             _scale_factor:=0.25 \
+             _jpeg_quality:=80"
 
 5. Publisher (UAV03)
-docker run --rm --net=host   -e ROS_MASTER_URI=http://$HOST_IP:11311   -e ROS_IP=$HOST_IP   -v /home/grvc/ros1_images:/images:ro   my_ros_image:latest   bash -c "source /root/catkin_ws/devel/setup.bash && \
-rosrun sv01_uav_bs_transmission image_publisher.py \
-_drone_id:=UAV_03 \
-_flight_num:=02 \
-_image_folder:=/images"
+docker run --rm --net=host \
+  -e ROS_MASTER_URI=http://$HOST_IP:11311 \
+  -e ROS_IP=$HOST_IP \
+  -v /home/grvc/ros1_images:/images:ro \
+  my_ros_image:latest \
+  bash -c "source /root/catkin_ws/devel/setup.bash && \
+           rosrun sv01_uav_bs_transmission image_publisher.py \
+             _drone_id:=UAV_03 \
+             _flight_num:=01 \
+             _image_folder:=/images \
+             _scale_factor:=0.25 \
+             _jpeg_quality:=80"
 

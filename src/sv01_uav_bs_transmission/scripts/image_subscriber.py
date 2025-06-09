@@ -1,26 +1,34 @@
 #!/usr/bin/env python3
 """
-ROS Noetic base-station image subscriber
----------------------------------------
+ROS Noetic base‑station image subscriber – thumbnail‑embed hotfix
+================================================================
 
-Subscribes to /image_meta (type sv01_uav_bs_transmission/ImageWithMetadataComp),
-writes every frame under <output_root>/<drone_id>/flight_<n>/,
-and embeds all metadata back into the saved image.
+Receives `ImageWithMetadataComp`, up‑scales the preview, **embeds every tag**
+AND forces the thumbnail into the JPEG using ExifTool’s
+`-ThumbnailImage<=file` syntax (more reliable than JSON import).
 
-Parameters
-~~~~~~~~~~
-~output_folder   (str)  Root directory for all images   [default: /tmp/drone_images]
-~queue_size      (int)  Max frames waiting for disk     [default: 500]
+2025‑06‑09 **Fix D**
+-------------------
+* After writing the image we **decode `ThumbnailImageData`, save it to a temp
+  file, and call**
+  ```bash
+  exiftool -overwrite_original -ThumbnailImage<=temp.jpg target.jpg
+  ```
+  which embeds the thumbnail even when the file had no EXIF block before.
+* Other tags are still written via the JSON import.
+
+Parameters stay the same (`~output_folder`, `~upscale_factor`, `~queue_size`).
 """
 
-# ── Python-3.8 typing retrofit ────────────────────────────────────────────────
-from __future__ import annotations   # enables PEP-563 postponed evaluation
+from __future__ import annotations
 
 import os
 import subprocess
 import queue
 import threading
 import json
+import base64
+import tempfile
 from typing import Dict, Any
 
 import cv2
@@ -28,54 +36,85 @@ import numpy as np
 import rospy
 from sv01_uav_bs_transmission.msg import ImageWithMetadataComp
 
+# ───────────────────────────── helpers ───────────────────────────────────────
 
-# ─────────────────────────────────── helpers ──────────────────────────────────
-def compressed_to_cv2(comp_msg):
-    """Convert sensor_msgs/CompressedImage → cv2 BGR ndarray."""
+def compressed_to_cv2(comp_msg) -> np.ndarray:
     buf = np.frombuffer(comp_msg.data, dtype=np.uint8)
     return cv2.imdecode(buf, cv2.IMREAD_COLOR)
 
 
+def prepare_exif_for_import(exif_dict: Dict[str, Any], target_path: str) -> Dict[str, Any]:
+    out: Dict[str, Any] = {"SourceFile": target_path}
+    skip = {"Directory", "FileName", "ThumbnailImageData"}
+    for k, v in exif_dict.items():
+        if k in skip:
+            continue
+        out[k] = v if isinstance(v, (dict, list, int, float)) else str(v)
+    return out
+
+
 def embed_exif(json_path: str, img_path: str) -> None:
-    """Write all tags from *json_path* into *img_path* in-place."""
-    subprocess.run(
-        ['exiftool', f'-json={json_path}', '-overwrite_original', img_path],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    res = subprocess.run(
+        ["exiftool", f"-json={json_path}", "-overwrite_original", "-preserve", img_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
+    if res.returncode != 0:
+        raise subprocess.CalledProcessError(res.returncode, res.args, res.stdout, res.stderr)
 
 
-def save_with_metadata(
-    cv_img: np.ndarray,
-    exif_dict: Dict[str, Any],
-    out_dir: str,
-    filename: str
-) -> None:
-    """Encode *cv_img* to disk and embed *exif_dict* via ExifTool."""
+def embed_thumbnail(thumb_b64: str, img_path: str) -> None:
+    if not thumb_b64:
+        return
+    try:
+        thumb_bytes = base64.b64decode(thumb_b64)
+    except base64.binascii.Error:
+        rospy.logwarn("Bad base‑64 thumbnail – skipping")
+        return
+    if not thumb_bytes:
+        return
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tf:
+        tf.write(thumb_bytes)
+        tmp_name = tf.name
+    try:
+        res = subprocess.run(
+            ["exiftool", "-overwrite_original", f"-ThumbnailImage<={tmp_name}", img_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if res.returncode != 0:
+            rospy.logwarn(f"Thumbnail embed failed: {res.stderr.decode().strip()}")
+    finally:
+        os.unlink(tmp_name)
+
+
+def save_with_metadata(cv_img: np.ndarray, exif_dict: Dict[str, Any], out_dir: str, filename: str) -> None:
     os.makedirs(out_dir, exist_ok=True)
     img_path = os.path.join(out_dir, filename)
 
-    # encode image
-    ext = os.path.splitext(filename)[1].lower() or '.jpg'
+    # 1) save the (up‑scaled) JPEG
+    ext = os.path.splitext(filename)[1].lower() or ".jpg"
     ok, buf = cv2.imencode(ext, cv_img)
     if not ok:
         raise IOError("cv2.imencode failed")
-
-    with open(img_path, 'wb') as fh:
+    with open(img_path, "wb") as fh:
         fh.write(buf)
 
-    # write one-object JSON for ExifTool
-    json_path = img_path + '.json'
-    with open(json_path, 'w', encoding='utf-8') as jf:
-        json.dump([exif_dict], jf, indent=4, ensure_ascii=False)
+    # 2) write all textual/numeric tags via JSON import
+    exif_clean = prepare_exif_for_import(exif_dict, img_path)
+    json_path = img_path + ".json"
+    with open(json_path, "w", encoding="utf-8") as jf:
+        json.dump([exif_clean], jf, indent=4, ensure_ascii=False)
+    try:
+        embed_exif(json_path, img_path)
+    finally:
+        os.remove(json_path)
 
-    # embed and clean up
-    embed_exif(json_path, img_path)
-    os.remove(json_path)
+    # 3) force‑embed the thumbnail
+    embed_thumbnail(exif_dict.get("ThumbnailImageData", ""), img_path)
 
+# ───────────────────── writer thread ─────────────────────────────────────────
 
-# ───────────────────────────── disk-writer thread ─────────────────────────────
 def disk_writer_worker(q: queue.Queue) -> None:
     while not rospy.is_shutdown():
         try:
@@ -88,72 +127,45 @@ def disk_writer_worker(q: queue.Queue) -> None:
         except Exception as exc:
             rospy.logerr(f"✖ Failed to save {fname}: {exc}")
 
+# ─────────────────────────── ROS callback ────────────────────────────────────
 
-# ─────────────────────────────── ROS callback ────────────────────────────────
-def make_callback(output_root: str, q: queue.Queue):
+def make_callback(output_root: str, upscale: float, q: queue.Queue):
     def image_cb(msg: ImageWithMetadataComp) -> None:
-        # 1) Decode the compressed bytes into a small (down-scaled) cv2 image
-        cv_img_small = compressed_to_cv2(msg.image)
-        if cv_img_small is None:
+        small = compressed_to_cv2(msg.image)
+        if small is None:
             rospy.logwarn("Decode failure – skipping frame")
             return
-
-        # 2) Upscale by a factor of 4 (bilinear looked blurry; cubic is nicer)
-        h_small, w_small = cv_img_small.shape[:2]
-        cv_img_up = cv2.resize(
-            cv_img_small,
-            (w_small * 4, h_small * 4),
-            interpolation=cv2.INTER_CUBIC,
-        )
-
-        # 3) Reconstruct metadata dict (undo json.dumps on publisher side)
-        exif_dict: Dict[str, Any] = {
-            k: json.loads(v) for k, v in zip(msg.metadata_keys, msg.metadata_values)
-        }
-
-        # 4) Determine output filename
-        filename = exif_dict.get('FileName')
-        if not filename:
-            # fallback: ROS timestamp + extension
-            filename = f"{msg.image.header.stamp.to_nsec()}.{msg.image.format}"
-
-        # 5) Build output directory path
-        drone   = msg.drone_id or 'unknown'
-        flight  = f"flight_{msg.flight_num}" if msg.flight_num else "flight_0"
-        out_dir = os.path.join(output_root, drone, flight)
-
-        # 6) Enqueue for disk writing
+        h_s, w_s = small.shape[:2]
+        big = cv2.resize(small, (max(1, int(w_s * upscale)), max(1, int(h_s * upscale))),
+                         interpolation=cv2.INTER_CUBIC)
+        exif_dict: Dict[str, Any] = {k: json.loads(v) for k, v in zip(msg.metadata_keys, msg.metadata_values)}
+        filename = exif_dict.get("FileName") or f"{msg.image.header.stamp.to_nsec()}.{msg.image.format}"
+        out_dir = os.path.join(output_root, msg.drone_id or "unknown", f"flight_{msg.flight_num or 0}")
         try:
-            q.put((cv_img_up, exif_dict, filename, out_dir), block=False)
+            q.put((big, exif_dict, filename, out_dir), block=False)
         except queue.Full:
             rospy.logwarn("Writer queue full – dropping frame")
-
     return image_cb
 
+# ─────────────────────────────── main ───────────────────────────────────────
 
-# ─────────────────────────────────── main ─────────────────────────────────────
 def main() -> None:
-    rospy.init_node('image_subscriber', anonymous=True)
+    rospy.init_node("image_subscriber", anonymous=True)
+    output_root = rospy.get_param("~output_folder", "/tmp/drone_images")
+    upscale = max(0.1, float(rospy.get_param("~upscale_factor", 4.0)))
+    qsize = int(rospy.get_param("~queue_size", 500))
 
-    output_root = rospy.get_param('~output_folder', '/tmp/drone_images')
-    qsize       = int(rospy.get_param('~queue_size', 500))
+    q = queue.Queue(maxsize=qsize)
+    threading.Thread(target=disk_writer_worker, args=(q,), daemon=True).start()
 
-    disk_q = queue.Queue(maxsize=qsize)
-    threading.Thread(target=disk_writer_worker, args=(disk_q,), daemon=True).start()
-
-    rospy.Subscriber(
-        'image_meta',
-        ImageWithMetadataComp,
-        make_callback(output_root, disk_q),
-        queue_size=200,
-        buff_size=50 * 1024 * 1024,
-    )
-
-    rospy.loginfo(f"📥 image_subscriber ready – writing to {output_root}")
+    rospy.Subscriber("image_meta", ImageWithMetadataComp,
+                     make_callback(output_root, upscale, q),
+                     queue_size=200, buff_size=50*1024*1024)
+    rospy.loginfo(f"📥 subscriber ready → {output_root} (upscale={upscale})")
     rospy.spin()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         main()
     except rospy.ROSInterruptException:
