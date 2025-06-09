@@ -137,24 +137,27 @@ def image_publisher():
                 rospy.logwarn(f"Cannot read {full}: {exc}")
                 continue
 
-            comp_bytes, fmt = reencode_image(full, raw_bytes, scale_factor, jpeg_quality)
-            meta = extract_metadata(full)
-            m_keys = sorted(meta)
-            m_vals = [json.dumps(meta[k], ensure_ascii=False) for k in m_keys]
+            try:
+                comp_bytes, fmt = reencode_image(full, raw_bytes, scale_factor, jpeg_quality)
+                meta = extract_metadata(full)
+                m_keys = sorted(meta)
+                m_vals = [json.dumps(meta[k], ensure_ascii=False) for k in m_keys]
 
-            msg = ImageWithMetadataComp()
-            msg.image.header.stamp = rospy.Time.now()
-            msg.image.format = fmt
-            msg.image.data = comp_bytes
-            msg.metadata_keys = m_keys
-            msg.metadata_values = m_vals
-            msg.drone_id = drone_id
-            msg.flight_num = flight_num
+                msg = ImageWithMetadataComp()
+                msg.image.header.stamp = rospy.Time.now()
+                msg.image.format = fmt
+                msg.image.data = comp_bytes
+                msg.metadata_keys = m_keys
+                msg.metadata_values = m_vals
+                msg.drone_id = drone_id
+                msg.flight_num = flight_num
 
-            pub.publish(msg)
-            thumb_kb = len(meta["ThumbnailImageData"]) * 3 // 4 // 1024
-            rospy.loginfo(f"Published {fn} (thumbnail {thumb_kb} kB, {len(m_keys)} tags)")
-            already_sent.add(fn)
+                pub.publish(msg)
+                thumb_kb = len(meta["ThumbnailImageData"]) * 3 // 4 // 1024
+                rospy.loginfo(f"Published {fn} (thumbnail {thumb_kb} kB, {len(m_keys)} tags)")
+                already_sent.add(fn)
+            except Exception as e:
+                rospy.loginfo(f"Error in image {full}")
 
         rate.sleep()
 

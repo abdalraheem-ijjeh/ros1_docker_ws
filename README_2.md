@@ -197,3 +197,17 @@ docker run --rm --net=host \
              _scale_factor:=0.25 \
              _jpeg_quality:=80"
 
+#### ON DRONE
+rosrun sv01_uav_bs_transmission image_publisher.py \
+             _drone_id:=UAV_01 \
+             _flight_num:=01 \
+             _image_folder:=/home/khadas/programming/Payload-SDK/build/bin \
+             _scale_factor:=0.5 \
+             _jpeg_quality:=90
+
+rosrun sv01_uav_bs_transmission image_publisher.py \
+             _drone_id:=UAV_02 \
+             _flight_num:=01 \
+             _image_folder:=/home/khadas/programming/Onboard-SDK/build/bin \
+             _scale_factor:=0.50 \
+             _jpeg_quality:=90
